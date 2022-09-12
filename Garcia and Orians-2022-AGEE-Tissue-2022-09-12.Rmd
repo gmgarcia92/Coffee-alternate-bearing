@@ -1,0 +1,229 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+Code for analyses of EXPERIMENT 2 (stem nitrogen) reported in Garcia and Orians (2022). "Reproductive tradeoffs in a perennial crop: Exploring the mechanisms of coffee alternate bearing in relation to farm management." Agriculture, Ecosystems, and Environment.
+
+
+# install / load packages 
+
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(lme4)
+library(boot)
+library(emmeans)
+library(car)
+```
+
+
+# MATURITY 2019 (y)
+
+## load data
+I referred to maturity as fruit harvest - so this section has "h"'s and "har"'s to distinguish it from later sampling points. 
+```{r}
+
+
+h19res <- read.csv("Harvest2019_Results - clean.csv", header = T)
+
+head(h19res) 
+
+```
+
+# adjust the data
+make sample id and thinning a discrete factor rather than a number. 
+```{r}
+
+har19res<- h19res %>%
+  mutate(per_thin = as.factor(per_thin)) %>% 
+  mutate(sample_id = as.factor(sample_id))
+
+
+```
+
+# subset stem data
+```{r}
+har19stem <- har19res[har19res$tissue =="stem",]
+head(har19stem)
+
+```
+
+###  model 
+```{r}
+h19stem_N <- glm(per_n ~ per_thin * shd_trt * fert_trt, data = har19stem)
+summary(h19stem_N)
+Anova(h19stem_N)
+
+as.data.frame(Anova(h19stem_N))
+har19_stemN_thin <- emmeans(h19stem_N, pairwise ~ per_thin, adjust="none")
+
+# post hocs
+emmeans(h19stem_N, pairwise ~ per_thin*shd_trt,adjust="none")
+emmeans(h19stem_N, pairwise ~shd_trt,adjust="none")
+emmeans(h19stem_N, pairwise ~fert_trt,adjust="none")
+
+h19stem_thin_ci = as.data.frame(har19_stemN_thin$emmeans)
+```
+
+###  plot 
+
+```{r}
+ggplot(h19stem_thin_ci, aes(per_thin, emmean, fill=per_thin))+
+  geom_errorbar(data = h19stem_thin_ci, mapping = aes(ymin=lower.CL, ymax=upper.CL), width = 0.5, color="black")+
+    geom_point(size=4, pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "0"), labels = c("33%","100%"))+
+  scale_y_continuous(name = "Stem % N at Fruit Maturity (y)", limits = c(1,2))+
+  theme_bw()+
+  scale_fill_manual(values = c( "#2ca25f", "#e5f5f9"))+
+  theme(text = element_text(size = 16))+
+  theme(legend.position = "none")
+
+```
+
+
+# FLOWERING 2020 (y+1)
+
+```{r}
+
+fl20res <- read.csv("Resource Analysis_Floral_2020.csv", header=T)
+
+head(fl20res)
+```
+
+```{r}
+fl20res<- fl20res %>%  
+  mutate(per_thin = as.factor(per_thin)) %>% 
+  mutate(sample_id = as.factor(sample_id))
+head(fl20res)
+```
+
+```{r}
+f20stem <- fl20res[fl20res$tissue=="stem",]
+head(f20stem)
+```
+
+
+### model 
+
+```{r}
+f20stem_N <- lm(per_n ~ per_thin * shd_trt * fert_trt, data = f20stem)
+summary(f20stem_N)
+Anova(f20stem_N)
+as.data.frame(Anova(f20stem_N))
+
+fl20_stN_thin <- emmeans(f20stem_N, pairwise ~ per_thin, adjust="none")
+f20stemN_thin_ci = as.data.frame(fl20_stN_thin$emmeans)
+```
+
+
+
+
+### plot
+
+# FRUIT INITIATION 2020 (y+1)
+
+```{r}
+
+i20res <- read.csv("Resource Analysis_Init_2020.csv", header = T)
+
+#inspect the first six rows, make sure it looks good. 
+head(i20res) 
+
+```
+
+```{r}
+
+init20res<- i20res %>%
+  mutate(per_thin = as.factor(per_thin)) %>% 
+  mutate(sample_id = as.factor(sample_id))
+
+
+```
+
+```{r}
+init20stem <- init20res[init20res$tissue =="stem",]
+ head(init20stem)
+
+```
+
+### model 
+```{r}
+i20stem_N <- lm(per_n ~ per_thin * shd_trt * fert_trt, data = init20stem)
+summary(i20stem_N)
+Anova(i20stem_N)
+
+as.data.frame(Anova(i20stem_N))
+init20_stemN_thin <- emmeans(i20stem_N, pairwise ~ per_thin)
+
+emmeans(i20stem_N, pairwise ~ per_thin*shd_trt, adjust="none")
+
+i20stem_thin_ci = as.data.frame(init20_stemN_thin$emmeans)
+```
+
+
+# MATURITY 2020 (y+1)
+
+```{r}
+
+h20res <- read.csv("Resource Analysis_Har_2020.csv", header = T)
+
+#inspect the first six rows, make sure it looks good. 
+head(h20res) 
+
+```
+
+```{r}
+har20res<- h20res %>%
+  mutate(per_thin = as.factor(per_thin)) 
+```
+
+
+```{r}
+har20stem <- har20res[har20res$tissue =="stem",]
+ head(har20stem)
+```
+
+###  model 
+```{r}
+har20stem_N<- glm(per_n ~ per_thin * shd_trt * fert_trt, data = har20stem)
+
+summary(har20stem_N)
+Anova(har20stem_N)
+
+
+as.data.frame(Anova(har20stem_N))
+har20_stemN_thin <- emmeans(har20stem_N, pairwise ~ per_thin, adjust="none")
+har20stem_thin_ci = as.data.frame(har20_stemN_thin$emmeans)
+
+ emmeans(har20stem_N, pairwise ~ fert_trt)
+ emmeans(har20stem_N, pairwise ~ shd_trt)
+
+```
+
+### plot 
+
+```{r}
+
+ggplot(har20stem_thin_ci, aes(per_thin, emmean, fill=per_thin))+
+  geom_errorbar(data = har20stem_thin_ci, mapping = aes(ymin=lower.CL, ymax=upper.CL), width = 0.5, color="black")+
+    geom_point(size=4, pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "0"), labels = c("33%","100%"))+
+  scale_y_continuous(name = "Stem % N at Fruit Maturity (y+1)", limits = c(1,2))+
+  theme_bw()+
+  scale_fill_manual(values = c( "#2ca25f", "#e5f5f9"))+
+  theme(text = element_text(size = 16))+
+  theme(legend.position = "none")
+
+```
+
+
+
+
+
+
+
+

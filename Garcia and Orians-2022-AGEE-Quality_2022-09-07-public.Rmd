@@ -1,0 +1,133 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Code for analyses of bean quality reported in Garcia and Orians (2022). "Reproductive tradeoffs in a perennial crop: Exploring the mechanisms of coffee alternate bearing in relation to farm management." Agriculture, Ecosystems, and Environment.
+
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(lme4)
+library(boot)
+library(bbmle)
+library(zoo)
+library(car)
+library(lmtest)
+library(mgcv)
+library(pscl)
+library(multcomp)
+library(emmeans)
+library(ggplot2)
+```
+
+# load data
+
+```{r}
+
+bq<-read.csv("bean-qual-18.csv", head=T)
+
+bq <- bq %>% 
+  mutate(bean_id =as.factor(bean_id)) %>% 
+  mutate(thinning = as.factor(thinning))
+
+```
+
+# model 
+
+```{r}
+m_18 <- lmer(bn_weight ~ thinning * fert * shd + (1|farmer), data=bq)
+
+Anova(m_18)
+summary(m_18)
+as.data.frame(Anova(m_18))
+
+```
+
+# post hocs 
+
+```{r}
+# thinning 
+m_18_thin = emmeans(m_18, pairwise ~ thinning, adjust ="none", pbkrtest.limit = 3099)
+thin18_ci = as.data.frame(m_18_thin$emmeans)
+
+# fert
+m_18_fert = emmeans(m_18, pairwise ~ fert, adjust ="none",  pbkrtest.limit = 3099)
+fert18_ci = as.data.frame(m_18_fert$emmeans)
+
+# thinning * fert
+m_18_thinfert = emmeans(m_18, pairwise ~ thinning * fert, adjust ="none",  pbkrtest.limit = 3099)
+thinfert18_ci = as.data.frame(m_18_thinfert$emmeans)
+
+# fert * shd 
+m_18_fertshd = emmeans(m_18, pairwise ~ fert * shd, adjust ="none",  pbkrtest.limit = 3099)
+fertshd18_ci = as.data.frame(m_18_fertshd$emmeans)
+```
+
+
+##  plot- thinning 
+```{r}
+ggplot(thin18_ci, aes(x=thinning, y=emmean, fill=thinning))+
+  geom_point(colour="black", size=4, pch=21)+
+  geom_errorbar(data=thin18_ci, mapping=aes(ymin=lower.CL, ymax=upper.CL), width=0.5, color="black")+
+ scale_x_discrete(name= "Relative fruit load (y)", limits=c("66", "33", "0"), labels = c("33%", "66%", "100%"))+ 
+  theme_bw() +
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(text = element_text(size = 20), legend.position = "none") +
+  scale_y_continuous(name = "Bean weight (mg) (y)")
+
+
+```
+
+
+##  plot - fert
+```{r}
+ggplot(fert18_ci, aes(x=fert, y=emmean))+
+  geom_point(colour="black", size=4, pch=19)+
+  geom_errorbar(data=fert18_ci, mapping=aes(ymin=lower.CL, ymax=upper.CL), width=0.5, color="black")+ 
+ scale_x_discrete(name= "Fertilizer", limits=c("low", "high"))+ 
+  theme_bw() +
+  theme(text = element_text(size = 16), legend.position = "none") +
+  scale_y_continuous(name = "Seed weight (mg) (y)")
+
+```
+
+
+##  plot - thinning * fert
+```{r}
+thinfert18_ci$plot_type <- paste(thinfert18_ci$thinning, thinfert18_ci$fert, sep = " ")
+
+
+ggplot(thinfert18_ci, aes(thinning, emmean, group=fert, color=fert, fill=fert ))+
+  geom_errorbar(data = thinfert18_ci, mapping = aes(ymin=lower.CL, ymax=upper.CL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits=c("66", "33", "0"), labels=c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "Bean weight (mg) (y)", limits=c(120, 200))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+
+```
+
+##  plot - fert * shd 
+
+```{r}
+
+ggplot(fertshd18_ci, aes(shd, emmean, group=fert, color=fert, fill=fert ))+
+  geom_errorbar(data = fertshd18_ci, mapping = aes(ymin=lower.CL, ymax=upper.CL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shade"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "Bean weight (mg) (y)", limits=c(120,200))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+
+```
+

@@ -1,0 +1,922 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+Code for analyses of EXPERIMENT 1 (reproductive tradeoffs) reported in Garcia and Orians (2022). "Reproductive tradeoffs in a perennial crop: Exploring the mechanisms of coffee alternate bearing in relation to farm management." Agriculture, Ecosystems, and Environment.
+
+
+```{r}
+library(ggeffects)
+library(Hmisc)
+library(glm2)
+library(glmmTMB)
+library(dplyr)
+library(tidyverse)
+library(lme4)
+library(boot)
+library(bbmle)
+library(zoo)
+library(car)
+library(lmtest)
+library(mgcv)
+library(pscl)
+library(multcomp)
+library(emmeans)
+library(ggsignif)
+library(ggpubr)
+library(ggplot2)
+library(MuMIn)
+
+```
+
+
+
+# read in clean 2019 data and mutate IDs to factors
+```{r}
+
+ndat <- read.csv( "cleandat_n1i_n1h.csv", header = T)
+head(ndat)
+
+ndat <- ndat %>%
+  mutate(branch_id = as.factor(branch_id)) %>% 
+  mutate(plant_id = as.factor(plant_id)) %>% 
+  mutate(per_thin = as.factor(per_thin)) %>% 
+  mutate(n1i_frt = as.integer(n1i_frt))
+
+```
+
+
+
+# read in 2018 data and clean up (code to make sure numbers are read as numbers)
+
+```{r}
+edat2h = read.csv("manip_e1i_e2f_e2i_e2h.csv", header=T)
+
+edath_fix<- edat2h %>% 
+  mutate(e2h_tot_len = as.character(e2h_tot_len)) %>% 
+  mutate(e2h_new_len= as.character(e2h_new_len)) %>% 
+  mutate(e2h_diam = as.character(e2h_diam)) %>% 
+  mutate(e2h_tot_nod = as.character(e2h_tot_nod)) %>% 
+  mutate(e2h_new_nod= as.character(e2h_new_nod)) %>% 
+  mutate(e2h_frtd_nod = as.character(e2h_frtd_nod)) %>% 
+  mutate(e2h_frt = as.character(e2h_frt)) %>% 
+  mutate(e2h_tot_lvs= as.character(e2h_tot_lvs)) %>% 
+  mutate(e2h_sick_lvs = as.character(e2h_sick_lvs)) 
+
+edath_full <-   edath_fix %>% 
+  mutate(e2h_tot_len = as.numeric(e2h_tot_len)) %>% 
+  mutate(e2h_new_len= as.numeric(e2h_new_len)) %>% 
+  mutate(e2h_diam = as.numeric(e2h_diam)) %>% 
+  mutate(e2h_tot_nod = as.numeric(e2h_tot_nod)) %>% 
+  mutate(e2h_new_nod= as.numeric(e2h_new_nod)) %>% 
+  mutate(e2h_frtd_nod = as.numeric(e2h_frtd_nod)) %>% 
+  mutate(e2h_frt = as.numeric(e2h_frt)) %>% 
+  mutate(e2h_tot_lvs= as.numeric(e2h_tot_lvs)) %>% 
+  mutate(e2h_sick_lvs = as.numeric(e2h_sick_lvs)) 
+
+head(edath_full)
+
+edath_full = edath_full %>%  
+  mutate(branch_id = as.factor(branch_id)) %>% 
+  mutate(plant_id = as.factor(plant_id)) %>% 
+  mutate(per_thin = as.factor(per_thin))
+
+head(edath_full)
+
+```
+
+
+# Models included in the body of the manuscript.
+
+# 1 Initiated fruited nodes - e2i (neg binom)
+
+## 1.1 model 
+
+```{r}
+head(edath_full)
+
+range(edat$e2i_frt_nod, na.rm = T)
+range(ndat$n1i_frtd_nod, na.rm = T)
+
+# compare poisson and negative binomial fits 
+
+#m_fruitnod = glmer(e2i_frt_nod~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id), family=poisson(link = "log"), data=edat)
+
+m_fruitnod_nb = glmer.nb(e2i_frt_nod~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id), data=edath_full)
+
+#ICtab(m_fruitnod, m_fruitnod_nb)
+
+summary(m_fruitnod_nb)
+Anova(m_fruitnod_nb)
+as.data.frame(Anova(m_fruitnod_nb))
+
+# checking if fixed effect of farmer changes things
+m_fruitnod_nb_f = glmer.nb(e2i_frt_nod~per_thin*fert_trt*shd_trt+ farmer+(1|plant_id), data=edath_full)
+
+# post hocs 
+
+## thinning 
+frtnod_thin_post = emmeans(m_fruitnod_nb,  pairwise ~ per_thin, type="response", adjust="none")
+eifrtnod_thin_ci <- as.data.frame(frtnod_thin_post$emmeans)
+
+## fertilizer
+frtnod_fert_post = emmeans(m_fruitnod_nb,  pairwise ~ fert_trt, type="response", adjust="none")
+eifrtnod_fert_ci <- as.data.frame(frtnod_fert_post$emmeans)
+
+## shade
+frtnod_shd_post = emmeans(m_fruitnod_nb,  pairwise ~ shd_trt, type="response", adjust="none")
+
+
+## fert-shd for plot 2A
+
+frtnod_fertshd = emmeans(m_fruitnod_nb,  pairwise ~ fert_trt*shd_trt, type="response", adjust="none")
+eifrtnod_fertshd_ci <- as.data.frame(frtnod_fertshd$emmeans)
+
+```
+
+## 1.2 thinning plot - e2i fnod (PLOT 2A)
+
+```{r}
+
+ggplot(eifrtnod_thin_ci, aes(per_thin, response, fill=per_thin))+
+    geom_errorbar(data = eifrtnod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "Old Branch:
+  Initiated Fruited Nodes", limits = c(2,8), breaks = c(2,4,6,8))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")
+
+```
+
+## 1.3 fert-shd plot (PLOT 3A)
+
+```{r}
+ggplot(eifrtnod_fertshd_ci, aes(x=shd_trt, y=response, group=fert_trt, color=fert_trt, fill=fert_trt))+
+    geom_errorbar(data = eifrtnod_fertshd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "Old Branch:
+  Initiated Fruited Nodes", limits = c(2,8))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+```
+
+# 2.  Initiated fruits per fruited node - e2i (neg binom) 
+
+# 2.1 model - e2i ffnod
+
+```{r}
+# model comparison - poisson vs. negative binomial
+
+#m_initfrt <- glmer(e2i_frts~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(e2i_frt_nod), family=poisson(link = "log"), data=edat[edat$e2i_frt_nod >0,])
+m_initfrt_nb <- glmer.nb(e2i_frts~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(e2i_frt_nod),data=edat[edat$e2i_frt_nod >0,])
+#ICtab(m_initfrt, m_initfrt_nb)
+
+summary(m_initfrt_nb)
+Anova(m_initfrt_nb)
+as.data.frame(Anova(m_initfrt_nb))
+
+# post hocs
+
+# thinning
+ffnod_thin_post = emmeans(m_initfrt_nb, pairwise ~ per_thin, adjust="none", type="response")
+effnod_thin_ci = as.data.frame(ffnod_thin_post$emmeans)
+# shade
+ffnod_shd_post = emmeans(m_initfrt_nb, pairwise ~ shd_trt, adjust="none", type="response")
+effnod_shd_ci= as.data.frame(ffnod_shd_post$emmeans)
+# fertilizer 
+ffnod_fert_post = emmeans(m_initfrt_nb, pairwise ~ fert_trt, adjust="none", type="response")
+
+# fert shd plot 
+ffnod_fertshd_post = emmeans(m_initfrt_nb, pairwise ~ fert_trt*shd_trt, adjust="none", type="response")
+effnod_fertshd_ci= as.data.frame(ffnod_fertshd_post$emmeans)
+```
+
+## 2.2 thin plot (PLOT 2B)
+
+```{r}
+
+ggplot(effnod_thin_ci, aes(per_thin, response, fill=per_thin))+
+    geom_errorbar(data = effnod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "Old Branch:
+  Initiated Fruits per Node", limits = c(2,8), breaks = c(4,6,8,10,12))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")
+
+```
+
+
+## 2.3 fert shd plot - e2i ffnod (PLOT 3B)
+```{r}
+
+ggplot(effnod_fertshd_ci, aes(shd_trt, response,group=fert_trt, color=fert_trt, fill=fert_trt ))+
+  geom_errorbar(data = effnod_fertshd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "Old Branch:
+  Initiated Fruits per Node", limits = c(2,8))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+```
+
+
+# 3. Initiated fruited nodes, new cohort (n1i) - poisson
+
+## 3.1 model 
+
+```{r}
+# model comparison - poisson vs. negative binomial
+
+m_fruitnod_n1 = glmer(n1i_frtd_nod~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id), family=poisson(link = "log"), data=ndat)
+
+#m_fruitnod_n1_nb = glmer.nb(n1i_frtd_nod~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id), data=ndat)
+
+#ICtab(m_fruitnod_n1, m_fruitnod_n1_nb)
+
+summary(m_fruitnod_n1)
+Anova(m_fruitnod_n1)
+as.data.frame(Anova(m_fruitnod_n1))
+
+# post hocs
+
+## thinning 
+n1_frtnod_thin_post = emmeans(m_fruitnod_n1,  pairwise ~ per_thin, type="response", adjust="none")
+nifnod_thin_ci = as.data.frame(n1_frtnod_thin_post$emmeans)
+
+## fertilizer
+n1_frtnod_fert_post = emmeans(m_fruitnod_n1,  pairwise ~ fert_trt, type="response", adjust="none")
+nifnod_fert_ci = as.data.frame(n1_frtnod_fert_post$emmeans)
+
+## 3 way
+n1_frtnod_fert_post = emmeans(m_fruitnod_n1,  pairwise ~ per_thin*fert_trt*shd_trt, type="response", adjust="none")
+nifnod_3_ci = as.data.frame(n1_frtnod_fert_post$emmeans)
+
+# shade 
+n1_frtnod_shd_post = emmeans(m_fruitnod_n1,  pairwise ~ shd_trt, type="response", adjust="none")
+
+#fert-shade  
+n1_frtshd_fert_post = emmeans(m_fruitnod_n1,  pairwise ~ fert_trt*shd_trt, type="response", adjust="none")
+nifnod_fertshd_ci = as.data.frame(n1_frtshd_fert_post$emmeans)
+```
+
+
+## 3.2 thin plot - n1i fnod (PLOT 2E)
+```{r}
+ggplot(nifnod_thin_ci, aes(per_thin, rate, fill=per_thin))+
+    geom_errorbar(data = nifnod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "New Branch:
+  Initiated Fruited Nodes", limits = c(2,12), breaks = c(2,4,6,8,10,12))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")
+
+```
+
+
+## 3.3 nifnod fert shade plot (PLOT 3E)
+```{r}
+
+ggplot(nifnod_fertshd_ci, aes(shd_trt, rate,group=fert_trt, color=fert_trt, fill=fert_trt ))+
+  geom_errorbar(data = nifnod_fertshd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "New Branch:
+  Initiated Fruited Nodes", limits = c(2,12), breaks = c(2,4,6,8,10,12))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+```
+
+## 3.4 Appendix 3:  3-way plot - n1i fnod
+
+```{r}
+nifnod_3_ci$plot_thin <- paste(nifnod_3_ci$per_thin, nifnod_3_ci$fert_trt, nifnod_3_ci$shd_trt, sep=" ")
+
+ggplot(nifnod_3_ci, aes(x=plot_thin, y=rate))+
+  geom_point(aes(fill=plot_thin), colour="black", size=4, pch=21)+
+  geom_errorbar(data=nifnod_3_ci, mapping=aes(ymin=asymp.LCL, ymax=asymp.UCL), width=0.5, color="black")+
+  scale_x_discrete(name="",limits= c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), labels = c("33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%"))+
+  scale_fill_manual(limits = c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), values = c("#662506","#993404", "#cc4c02","#004529","#006837", "#238443", "#ec7014" , "#fe9929", "#fec44f", "#41ab5d", "#78c679","#addd8e"))+
+  theme_bw()+
+  theme(text = element_text(size = 16), legend.position = "none")+
+  scale_y_continuous(name = "New Branch: Initiated Fruited Nodes",  limits=c(4, 10), breaks=c(6, 8, 10))
+
+```
+
+
+
+# 4. Initiated fruits per fruited node - new cohort (n1i) - neg binom
+
+## 4.1 model 
+
+```{r}
+
+#m_initfrt_n1 <- glmer(n1i_frt~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(n1i_frtd_nod), family=poisson(link = "log"), data=ndat[ndat$n1i_frtd_nod >0,])
+
+m_initfrt_n1_nb <- glmer.nb(n1i_frt~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(n1i_frtd_nod), data=ndat[ndat$n1i_frtd_nod >0,])
+
+#ICtab(m_initfrt_n1, m_initfrt_n1_nb)
+
+summary(m_initfrt_n1_nb)
+Anova(m_initfrt_n1_nb)
+as.data.frame(Anova(m_initfrt_n1_nb))
+
+# post hocs
+
+# thinning 
+n1_frt_thin_post = emmeans(m_initfrt_n1_nb,  pairwise ~ per_thin, type="response", adjust="none")
+niffnod_thin_ci = as.data.frame(n1_frt_thin_post$emmeans)
+
+# fert 
+n1_frt_fert_post = emmeans(m_initfrt_n1_nb,  pairwise ~ fert_trt, type="response", adjust="none")
+niffnod_fert_ci = as.data.frame(n1_frt_fert_post$emmeans)
+
+# shade 
+n1_frt_shd_post = emmeans(m_initfrt_n1_nb,  pairwise ~ shd_trt, type="response", adjust="none")
+niffnod_shd_ci= as.data.frame(n1_frt_shd_post$emmeans)
+
+# fert shd plot 
+n1ffnod_fertshd_post = emmeans(m_initfrt_n1_nb,  pairwise ~ fert_trt*shd_trt, type="response", adjust="none")
+niffnod_fertshd_ci= as.data.frame(n1ffnod_fertshd_post$emmeans)
+
+
+```
+
+## 4.2 thin plot - n1i ffnod (PLOT 2F)
+```{r}
+ggplot(niffnod_thin_ci, aes(per_thin, response, fill=per_thin))+
+  geom_errorbar(data = niffnod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "New Branch:
+  Initiated Fruits per Node", limits = c(4,12), breaks = c(2,4,6,8,10, 12))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")
+
+
+```
+
+
+## 4.3 fert shd n1i ffnod (PLOT 3F)
+
+```{r}
+ggplot(niffnod_fertshd_ci, aes(shd_trt, response, group=fert_trt, color=fert_trt, fill=fert_trt ))+
+  geom_errorbar(data = niffnod_fertshd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "New Branch:
+  Initiated Fruits per Node", limits = c(2,12), breaks = c(2,4,6,8,10,12))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+```
+
+
+
+# 5. Mature fruited nodes - old cohort (e2h)- neg binom
+
+## 5.1 model
+
+```{r}
+
+
+#m_harfrtdnod <- glmer(e2h_frtd_nod~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), family=poisson(link = "log"), data=edath_full)
+m_harfrtdnod_nb <- glmer.nb(e2h_frtd_nod~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), data=edath_full)
+#ICtab(m_harfrtdnod, m_harfrtdnod_nb)
+
+summary(m_harfrtdnod_nb)
+Anova(m_harfrtdnod_nb)
+as.data.frame(Anova(m_harfrtdnod_nb))
+
+# thinning 
+harfrtdnod_thin_post = emmeans(m_harfrtdnod_nb,  pairwise ~ per_thin, type="response", adjust="none")
+e2hfnod_thin_ci= as.data.frame(harfrtdnod_thin_post$emmeans)
+
+#fert 
+harfrtdnod_fert_post = emmeans(m_harfrtdnod_nb,  pairwise ~ fert_trt, type="response", adjust="none")
+e2hfnod_fert_ci = as.data.frame(harfrtdnod_fert_post$emmeans)
+
+# shade 
+harfrtdnod_shd_post = emmeans(m_harfrtdnod_nb,  pairwise ~ shd_trt, type="response", adjust="none")
+e2hfnod_shd_ci= as.data.frame(harfrtdnod_shd_post$emmeans)
+
+# fert shd  
+harfrtdnod_fertshd_post = emmeans(m_harfrtdnod_nb,  pairwise ~ fert_trt*shd_trt, type="response", adjust="none")
+e2hfnod_fertshd_ci= as.data.frame(harfrtdnod_fertshd_post$emmeans)
+```
+
+
+## 5.2 thin plot - e2h fnod (PLOT 2C)
+
+```{r}
+ggplot(e2hfnod_thin_ci, aes(per_thin, response, fill=per_thin))+
+  geom_errorbar(data = e2hfnod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")+
+  scale_y_continuous( name = "Old Branch:
+  Mature Fruited Nodes", limits = c(2,8), breaks = c(2,4,6,8,10,12))
+
+
+```
+
+
+## 5.3 fert shd e2h fnod (PLOT 3C)
+
+```{r}
+ggplot(e2hfnod_fertshd_ci, aes(shd_trt, response, group=fert_trt, color=fert_trt, fill=fert_trt ))+
+  geom_errorbar(data = e2hfnod_fertshd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "Old Branch:
+  Mature Fruited Nodes", limits = c(2,8), breaks = c(2,4,6,8,10,12))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+```
+
+# 6. Mature fruits per fruited node - old cohort (e2h)- neg binom
+
+## 6.1 model 
+```{r}
+
+#m_harffnod <- glmer(e2h_frt~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(e2h_frtd_nod), family=poisson(link = "log"), data=edath_full[edath_full$e2h_frtd_nod >0,])
+
+m_harffnod_nb <- glmer.nb(e2h_frt~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(e2h_frtd_nod), data=edath_full[edath_full$e2h_frtd_nod >0,])
+
+#ICtab(m_harffnod, m_harffnod_nb)
+
+summary(m_harffnod_nb)
+Anova(m_harffnod_nb)
+as.data.frame(Anova(m_harffnod_nb))
+
+# thin  
+harffnod_thin_post = emmeans(m_harffnod_nb,  pairwise ~ per_thin, type="response", adjust="none")
+ehffnod_thin_ci = as.data.frame(harffnod_thin_post$emmeans)
+
+# shade 
+harffnod_shd_post = emmeans(m_harffnod_nb,  pairwise ~ shd_trt, type="response", adjust="none")
+ehffnod_shd_ci = as.data.frame(harffnod_shd_post$emmeans)
+
+# fert 
+harffnod_fert_post = emmeans(m_harffnod_nb,  pairwise ~ fert_trt, type="response", adjust="none")
+
+# fert shd plot 
+harffnod_fertshd_post = emmeans(m_harffnod_nb,  pairwise ~ fert_trt*shd_trt, type="response", adjust="none")
+ehffnod_fertshd_ci = as.data.frame(harffnod_fertshd_post$emmeans)
+```
+
+## 6.2 thin plot - - e2h ffnod (PLOT 2D)
+
+```{r}
+ggplot(ehffnod_thin_ci, aes(per_thin, response, fill=per_thin))+
+  geom_errorbar(data = ehffnod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")+
+  scale_y_continuous( name = "Old Branch:
+  Mature Fruits per Node", limits = c(2,8), breaks = c(2,4,6,8))
+
+```
+
+
+## 6.3 e2h ffond fert shd plot (PLOT 3D)
+```{r}
+ggplot(ehffnod_fertshd_ci, aes(shd_trt, response, group=fert_trt, color=fert_trt, fill=fert_trt ))+
+  geom_errorbar(data = ehffnod_fertshd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "Old Branch:
+  Mature Fruits per Node", limits = c(2,8), breaks = c(2,4,6,8,10,12))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+```
+
+
+# 7. Mature fruited nodes - new branch cohort (n1h)- poisson 
+
+## 7.1 model
+```{r}
+m_harfrtdnod_n1 <- glmer(n1h_frtd_nod~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), family=poisson(link = "log"), data=ndat)
+
+#m_harfrtdnod_n1_nb <- glmer.nb(n1h_frtd_nod~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id),  data=ndat)
+
+#ICtab(m_harfrtdnod_n1, m_harfrtdnod_n1_nb)
+
+Anova(m_harfrtdnod_n1)
+as.data.frame(Anova(m_harfrtdnod_n1))
+
+#thin - non sig! - supplement
+n1_harfrtdnod_thin_post = emmeans(m_harfrtdnod_n1, pairwise ~ per_thin, type ="response", adjust="none")
+n1ihfnod_thin_ci = as.data.frame(n1_harfrtdnod_thin_post$emmeans)
+
+# fert 
+n1_harfrtdnod_fert_post = emmeans(m_harfrtdnod_n1, pairwise ~ fert_trt, type ="response", adjust="none")
+n1hfnod_fert_ci = as.data.frame(n1_harfrtdnod_fert_post$emmeans)
+
+
+# 3 way - supplement
+n1_harfrtdnod_three_post = emmeans(m_harfrtdnod_n1, pairwise ~ per_thin*fert_trt*shd_trt, type ="response", adjust="none")
+n1hfnod_3_ci = as.data.frame(n1_harfrtdnod_three_post$emmeans)
+
+# shade 
+n1_harfrtdnod_shd_post = emmeans(m_harfrtdnod_n1, pairwise ~ shd_trt, type ="response", adjust="none")
+
+# fert shd 
+n1_harfrtdnod_fertshd_post = emmeans(m_harfrtdnod_n1, pairwise ~ fert_trt*shd_trt, type ="response", adjust="none")
+n1hfnod_fertshd_ci = as.data.frame(n1_harfrtdnod_fertshd_post$emmeans)
+
+```
+
+## 7.2 thin plot - n1h fnod (not sig.)
+
+```{r}
+ggplot(n1ihfnod_thin_ci, aes(per_thin, rate, fill=per_thin))+
+  geom_errorbar(data = n1ihfnod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")+
+  scale_y_continuous( name = "New Branch:
+  Mature Fruited Nodes", limits = c(2,9), breaks = c(2,4,6,8,10,12))
+
+```
+
+## 7.3 n1h fnod fert shd plot (PLOT 3G)
+
+```{r}
+ggplot(n1hfnod_fertshd_ci, aes(shd_trt, rate, group=fert_trt, color=fert_trt, fill=fert_trt ))+
+  geom_errorbar(data = n1hfnod_fertshd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black", position = position_dodge(width = 0.5))+
+  geom_point(size=4,  color="black", pch=21, position = position_dodge(width = 0.5))+
+  geom_line( position = position_dodge(width = 0.5))+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "New Branch:
+  Mature Fruited Nodes", limits = c(2,8.5), breaks = c(2,4,6,8,10,12))+
+  scale_color_manual(name="Fertilizer",values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  scale_fill_manual(name="Fertilizer", values= c("coral", "cornflowerblue"), labels=c("high", "low"))+
+  theme_bw()+
+  theme(text = element_text(size = 20))
+
+```
+
+
+## 7.4 Appendix 3. plot 3 way - n1h fnod
+
+```{r}
+n1hfnod_3_ci$plot_thin <- paste(n1hfnod_3_ci$per_thin, n1hfnod_3_ci$fert_trt, n1hfnod_3_ci$shd_trt, sep=" ")
+
+
+ggplot(n1hfnod_3_ci, aes(x=plot_thin, y=rate))+
+  geom_point(aes(fill=plot_thin), colour="black", size=4, pch=21)+
+  geom_errorbar(data=n1hfnod_3_ci, mapping=aes(ymin=asymp.LCL, ymax=asymp.UCL), width=0.5, color="black")+
+  scale_x_discrete(name="",limits= c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), labels = c("33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%"))+
+  scale_fill_manual(limits = c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), values = c("#662506","#993404", "#cc4c02","#004529","#006837", "#238443", "#ec7014" , "#fe9929", "#fec44f", "#41ab5d", "#78c679","#addd8e"))+
+  theme_bw()+
+  theme(text = element_text(size = 16), legend.position = "none")+
+  scale_y_continuous(name = "New cohort: Mature Fruited Nodes",  limits=c(4, 10), breaks=c(6, 8, 10))
+
+```
+
+
+#8. Mature fruits per fruited node - new branch cohort (n1h)- neg binom
+
+## 8.1 model 
+
+```{r}
+#m_harffnod_n1 <- glmer(n1h_frt~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(n1h_frtd_nod), family=poisson(link = "log"), data=ndat[ndat$n1h_frtd_nod >0,])
+
+m_harffnod_n1_nb <- glmer.nb(n1h_frt~per_thin*fert_trt*shd_trt +(1|farmer)+(1|plant_id), offset = log(n1h_frtd_nod), data=ndat[ndat$n1h_frtd_nod >0,])
+
+#ICtab(m_harffnod_n1, m_harffnod_n1_nb)
+
+summary(m_harffnod_n1_nb)
+Anova(m_harffnod_n1_nb)
+
+# thin 
+n1_harffnod_thin_post = emmeans(m_harffnod_n1_nb, pairwise ~ per_thin, type ="response", adjust="none")
+n1ihffnod_thin_ci = as.data.frame(n1_harffnod_thin_post$emmeans)
+
+# fert
+n1_harffnod_fert_post = emmeans(m_harffnod_n1_nb, pairwise ~ fert_trt, type ="response", adjust="none")
+
+# shade 
+n1_harffnod_shd_post = emmeans(m_harffnod_n1_nb, pairwise ~ shd_trt, type ="response", adjust="none")
+
+
+```
+
+
+# 9. Cumulative average fruits per branch in old cohort across years. 
+
+## data prep
+```{r}
+
+# making a treatment dataframe to merge
+edat_trt <- edath_full %>% 
+  dplyr::group_by(plant_id) %>% 
+  dplyr::select(farmer,fert_trt, shd_trt, per_thin)
+
+edat_trt_unique = distinct(edat_trt, plant_id, .keep_all = TRUE)
+
+# average fruits  in y (y cohort)
+edat1h_avgfrts <- edath_full %>%
+  group_by(plant_id) %>% 
+  dplyr::summarize(e1h_avg_frts= mean(e1h_tot_fruit, na.rm = TRUE)) 
+
+# average fruits in y+1 (y cohort)
+edat2h_avgfrts <- edath_full %>%
+  group_by(plant_id) %>% 
+  dplyr::summarize(e2h_avg_frts= mean(e2h_frt, na.rm = TRUE)) 
+
+e12_sumfrts <-  merge(edat1h_avgfrts, edat2h_avgfrts, by = "plant_id")
+e12_sum_trt <- merge(e12_sumfrts, edat_trt_unique,  by ="plant_id")
+
+# looking at y and y+1 sums within the y cohort 
+
+e12_sum_trt$sum_12hfrts <- e12_sum_trt$e1h_avg_frts + e12_sum_trt$e2h_avg_frts
+
+
+
+```
+
+
+## model
+
+```{r}
+# mh_12sumffnod0 <- glmer(as.integer(sum_12hfrts) ~ per_thin * fert_trt * shd_trt +(1|farmer), family = poisson(), data = e12_sums)
+
+mh_12sumfrts <- glmer.nb(as.integer(sum_12hfrts) ~ per_thin * fert_trt * shd_trt +(1|farmer),  data = e12_sum_trt)
+
+
+#ICtab(mh_12sumffnod0, mh_12sumffnodnb)
+
+summary(mh_12sumfrts)
+Anova(mh_12sumfrts)
+
+emmeans(mh_12sumfrts, pairwise ~ per_thin, type="response", adjust="none")
+emmeans(mh_12sumfrts, pairwise ~ fert_trt*shd_trt, type = "response", adjust="none")
+```
+
+#########################################################
+
+
+# Assessment of pre-existing differences across treatments 
+
+
+## 0A. total nodes 
+
+pre_totnod = pre-existing total nodes per branch
+```{r}
+pre_totnod <- glmer(e1i_tot_nod~per_thin+fert_trt+shd_trt +(1|farmer)+(1|plant_id), data=edath_full, family=poisson(link = "log"))
+Anova(pre_totnod)
+
+emmeans(pre_totnod, pairwise ~ shd_trt, type="response", adjust = "none")
+
+```
+
+
+## 0B. Initiated  fruits
+
+pre_prefrt = pre-existing fruits per branch. 
+e1i_pot_nod = 2018 branch, 1st year of production, i = fruit initation; pot_nod = nodes with fruiting potential (not the newly extended nodes)
+
+```{r}
+# pre thin
+pre_prefrt<- glmer(e1i_pre_frt~per_thin+fert_trt+shd_trt +(1|farmer)+(1|plant_id), offset = log(e1i_pot_nod), data=edath_full[edath_full$e1i_pot_nod>0,], family=poisson(link = "log"))
+  
+summary(pre_prefrt)
+Anova(pre_prefrt)
+
+```
+
+## 0C. nodes with fruiting potential
+
+```{r}
+pre_potnod <-glmer(e1i_pot_nod ~ per_thin + fert_trt + shd_trt + (1|farmer) + (1|plant_id), family = poisson (link = "log"), data= edath_full)
+Anova(pre_potnod)
+
+emmeans(pre_potnod, pairwise ~ shd_trt, type="response", adjust="none")
+
+```
+
+
+## 0D. leaves 
+
+```{r}
+
+pre_leaves <-glmer(e1i_tot_lvs ~ per_thin + fert_trt + shd_trt +(1|farmer) + (1|plant_id), family = poisson(link = "log"), data= edath_full)
+Anova(pre_leaves)
+emmeans(pre_leaves, pairwise ~ shd_trt, type="response", adjust="none")
+
+```
+
+## 0E. length 
+
+```{r}
+pre_length <- lmer(e1i_len~per_thin+fert_trt+shd_trt + (1|farmer)+(1|plant_id), data=edath_full)
+Anova(pre_length)
+emmeans(pre_length, pairwise ~ shd_trt, adjust="none")
+```
+
+
+# Appendix 1 
+
+analyze growth, fruited nodes, and fruits per fruited node at maturity in y (2018) and flowering nodes and buds per node at flowering in 2019. 
+
+##  branch growth measured at fruit maturity in y (e1har)
+```{r}
+# make growth variable
+edath_full$e1h_growth <- edath_full$e1h_len - edath_full$e1i_len
+hist(edath_full$e1h_growth)
+
+# growth model 
+ehar_growth <- lmer(e1h_growth~per_thin*fert_trt*shd_trt + (1|farmer)+(1|plant_id), data=edath_full)
+Anova(ehar_growth)
+summary(ehar_growth)
+
+# post hoc and confidence intervals for plots
+ehar_growth_post <- emmeans(ehar_growth, pairwise ~ per_thin, adjust="none")
+ehgrowth_thin_ci <- as.data.frame(ehar_growth_post$emmeans)
+
+
+### percent thin plot
+ggplot(ehgrowth_thin_ci, aes(per_thin, emmean, fill=per_thin))+
+    geom_errorbar(data = ehgrowth_thin_ci, mapping = aes(ymin=lower.CL, ymax=upper.CL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "Branch growth in cm (y)", limits = c(2,16))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")
+
+
+
+
+### 3-way plot
+ehar_growth_3way_post <- emmeans(ehar_growth, pairwise ~ per_thin*fert_trt*shd_trt, adjust="none")
+ehgrowth_3way_ci <- as.data.frame(ehar_growth_3way_post$emmeans)
+
+ehgrowth_3way_ci$plot_thin <- paste(ehgrowth_3way_ci$per_thin, ehgrowth_3way_ci$fert_trt, ehgrowth_3way_ci$shd_trt, sep=" ")
+
+ggplot(ehgrowth_3way_ci, aes(x=plot_thin, y=emmean))+
+  geom_point(aes(fill=plot_thin), colour="black", size=4, pch=21)+
+  geom_errorbar(data=ehgrowth_3way_ci, mapping=aes(ymin=lower.CL, ymax=upper.CL), width=0.5, color="black") +
+  scale_fill_manual(limits = c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), values = c("#662506","#993404", "#cc4c02","#004529","#006837", "#238443", "#ec7014" , "#fe9929", "#fec44f", "#41ab5d", "#78c679","#addd8e"))+
+  scale_x_discrete(name="",limits= c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), labels = c("33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%"))+
+  theme_bw()+
+  theme(text = element_text(size = 16), legend.position = "none")  +
+scale_y_continuous(name = "Branch growth in cm (y)",  limits=c(2, 16))
+
+```
+
+
+## floral nodes in y+1 (e2f)
+
+
+```{r}
+head(edath_full)
+#m_flornod = glmer(e2f_flor_nod~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id), family=poisson(link = "log"), data=edath_full)
+edath_full$e2i_frt_nod
+m_flornod_nb = glmer.nb(e2f_flor_nod~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id), data=edath_full[edath_full$e2f_flor_nod >0, ])
+ICtab(m_flornod, m_flornod_nb)
+
+summary(m_flornod_nb)
+Anova(m_flornod_nb)
+
+## thinning post hoc
+flornod_thin_post = emmeans(m_flornod_nb,  pairwise ~ per_thin, type="response", adjust="none")
+e1flornod_thin_ci <- as.data.frame(flornod_thin_post$emmeans)
+
+### thin plot
+ggplot(e1flornod_thin_ci, aes(per_thin, response, fill=per_thin))+
+    geom_errorbar(data = e1flornod_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "Floral nodes (y+1)", limits = c(2,11))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")
+
+
+
+## fertilizer post hoc 
+flornod_fert_post = emmeans(m_flornod_nb,  pairwise ~ fert_trt, type="response", adjust="none")
+e1flornod_fert_ci <- as.data.frame(flornod_fert_post$emmeans)
+
+
+## three way post hoc
+flornod_3way_post = emmeans(m_flornod_nb,  pairwise ~ per_thin*fert_trt*shd_trt, type="response", adjust="none")
+e2flornod_3way_ci <- as.data.frame(flornod_3way_post$emmeans)
+
+
+e2flornod_3way_ci$plot_thin <- paste(e2flornod_3way_ci$per_thin, e2flornod_3way_ci$fert_trt, e2flornod_3way_ci$shd_trt, sep=" ")
+
+ggplot(e2flornod_3way_ci, aes(x=plot_thin, y=response))+
+  geom_point(aes(fill=plot_thin), colour="black", size=4, pch=21)+
+  geom_errorbar(data=e2flornod_3way_ci, mapping=aes(ymin=asymp.LCL, ymax=asymp.UCL), width=0.5, color="black") +
+  scale_fill_manual(limits = c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), values = c("#662506","#993404", "#cc4c02","#004529","#006837", "#238443", "#ec7014" , "#fe9929", "#fec44f", "#41ab5d", "#78c679","#addd8e"))+
+  scale_x_discrete(name="",limits= c("66 h sun","33 h sun", "0 h sun",  "66 h shd", "33 h shd", "0 h shd", "66 l sun", "33 l sun", "0 l sun",  "66 l shd", "33 l shd", "0 l shd"), labels = c("33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%","33%", "66%", "100%"))+
+  theme_bw()+
+  theme(text = element_text(size = 16), legend.position = "none")  +
+scale_y_continuous(name = "Floral nodes (y+1)",  limits=c(2, 11))
+
+
+```
+
+
+## e2f floral buds per node 
+
+
+```{r}
+head(edath_full)
+#m_florbud = glmer(e2f_buds~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id), offset=log(e2f_flor_nod), family=poisson(link = "log"), data=edath_full[edath_full$e2f_buds >0, ])
+
+m_florbud_nb = glmer.nb(e2f_buds~per_thin*fert_trt*shd_trt+(1|farmer)+(1|plant_id),offset=log(e2f_flor_nod), data=edath_full[edath_full$e2f_buds >0, ])
+#ICtab(m_florbud, m_florbud_nb)
+
+Anova(m_florbud_nb)
+
+
+## thinning post hoc
+florbud_thin_post = emmeans(m_florbud_nb,  pairwise ~ per_thin, type="response", adjust="none")
+e2florbud_thin_ci <- as.data.frame(florbud_thin_post$emmeans)
+
+### thin plot
+ggplot(e2florbud_thin_ci, aes(per_thin, response, fill=per_thin))+
+    geom_errorbar(data = e2florbud_thin_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Relative Fruit Load (y)", limits =c("66", "33", "0"), labels = c("33%", "66%", "100%"))+
+  scale_y_continuous(name = "Floral buds per node (y+1)", limits = c(2,11))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Greens",direction = -1)+
+  theme(legend.position = "none")
+
+
+## shade  post hoc
+florbud_shd_post = emmeans(m_florbud_nb,  pairwise ~ shd_trt, type="response", adjust="none")
+e2florbud_shd_ci <- as.data.frame(florbud_shd_post$emmeans)
+
+### shade plot
+ggplot(e2florbud_shd_ci, aes(shd_trt, response, fill=shd_trt))+
+    geom_errorbar(data = e2florbud_shd_ci, mapping = aes(ymin=asymp.LCL, ymax=asymp.UCL), width = 0.5, color="black")+
+  geom_point(size=5, color="black", pch=21)+
+  scale_x_discrete(name="Light Treatment", limits=c("sun", "shd"), labels=c("sun-grown", "shaded"))+
+  scale_y_continuous(name = "Floral buds per node (y+1)", limits = c(2,11))+
+  theme_bw()+
+  theme(text = element_text(size = 20))+
+  scale_fill_brewer(palette = "Reds",direction = 1)+
+  theme(legend.position = "none")
+
+
+```
+
+
+#########################################################
+
+
